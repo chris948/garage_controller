@@ -1,97 +1,69 @@
+extern "C" 
+{
+#include "user_interface.h"
+} 
+
+#include <FS.h>
+#include <SPI.h>
+#include <Wire.h>
+
+#include <ESP8266WiFi.h>          //https://github.com/esp8266/Arduino
+
+#include <DNSServer.h>
+#include <WiFiManager.h>         //https://github.com/tzapu/WiFiManager
+#include <ArduinoJson.h>
+#include <ESP8266mDNS.h>
+#include <WiFiUdp.h>
+#include <WiFiClient.h>
+#include <ESP8266WebServer.h>
+#include <WebOTA.h>
 #include <PubSubClient.h>
-#include <ESP8266SMTP.h>
-#include <ESP8266WiFi.h>
-#include "secrets.h"
 
-const char *message = "CLOSED";
+WiFiClient espClient;
+PubSubClient client(espClient);
 
-const char *wifi_ssid = _wifi_ssid;
-const char *wifi_password = _wifi_password;
-const char *mqtt_server = _mqtt_server;
+//todo - stop hard coding this
+const char* mqttServer = "172.16.0.2";
+const int mqttPort = 1883;
 
+//todo - stop hard coding this
+#define garage_topic_out "sensor/garageDoorStatus2"
+#define garage_topic_in "sensor/garageDoorRelay2"
 
-#define garage_topic_out "sensor/garageDoorStatus"
-#define garage_topic_in "sensor/garageDoorRelay"
-
-
+//todo - stop hard coding this
 //constants for GPIO pins
-const int switchPin = 5;     // the number of the pushbutton pin
+const int groundPin = 12;     // the number of the pushbutton pin
 const int relayPin =  4;      // the number of the LED pin
+const int switchPin = 13; 
 
 // variables will change:
 int switchState = 0;         // variable for reading the pushbutton status
 int lastState = 0;
 
-
-
-void setup_wifi() {
-  delay(10);
-  // We start by connecting to a WiFi network
-  Serial.println();
-  Serial.print("Connecting to ");
-  Serial.println(wifi_ssid);
-
-  WiFi.begin(wifi_ssid, wifi_password);
-
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-
-  Serial.println("");
-  Serial.println("WiFi connected");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
+void flipRelay() {
+  digitalWrite(relayPin, HIGH);
+  delay(500);
+  digitalWrite(relayPin, LOW);
 }
 
 // Callback function header
 void callback(char* topic, byte* payload, unsigned int length);
 
-WiFiClient espClient;
-PubSubClient client(mqtt_server, 1883, callback, espClient);
-
-// Callback function when a message is received
-void callback(char* topic, byte* payload, unsigned int length) {
-
-
-  // Allocate the correct amount of memory for the payload copy
-  //byte* p = (byte*)malloc(length);
-
-  //byte array to compare the MQTT incoming message to
-  byte OPEN[5] = "FLIP";
-
-  int check;
-  check = memcmp(payload, OPEN, sizeof(payload));
-  Serial.println(check);
-  if (check == 0) {
+void MQTTcallback(char* topic, byte* payload, unsigned int length) {
+ 
+  Serial.print("Message arrived in topic: ");
+  Serial.println(topic);
+  String message;
+  for (int i = 0; i < length; i++) {
+    message = message + (char)payload[i];  //Conver *byte to String
+  }
+  Serial.println("-----------------------"); 
+  Serial.println(message);
+  if(message == "testFLIP") {
     flipRelay();
-  }
+    }
+  Serial.println("-----------------------");  
 }
-
-//function if I ever want to move the warning to the esp8266
-void send_gmail() {
-  const char *email = _email;
-  const char *email_password = _email_password;
-  const char *smtpSend = _smtpSend;
-
-  SMTP.setEmail(email)
-  .setPassword(email_password)
-  .Subject("Garage door open warning")
-  .setFrom("ESP8266SMTP")
-  .setForGmail();
-
-  if (SMTP.Send(smtpSend, "Garage Door Open Warning")) {
-    Serial.println(F("Message sent"));
-  }
-
-  else {
-    Serial.print(F("Error sending message: "));
-    Serial.println(SMTP.getError());
-  }
-
-
-}
-
 
 void reconnect() {
   // Loop until we're reconnected
@@ -99,10 +71,10 @@ void reconnect() {
     Serial.print("Attempting MQTT connection...");
     // Attempt to connect
     // If you do not want to use a username and password, uncomment next line
-    if (client.connect("ESP8266Client")) {
+    if (client.connect("ESP8266_garage")) {
       // if (client.connect("ESP8266Client", mqtt_user, mqtt_password)) {
       Serial.println("connected");
-      client.publish(garage_topic_out, "****garage esp8266 online****");
+      client.publish(garage_topic_out, "****light esp8266 online****");
       // ... and resubscribe
       client.subscribe(garage_topic_in);
     } else {
@@ -115,58 +87,86 @@ void reconnect() {
   }
 }
 
-// function to publish an mqtt message
-void sendSignal() {
-  //Serial.println("sending signal");
-  client.publish(garage_topic_out, String(message).c_str());
-  lastState = digitalRead(switchPin);
-}
+//// function to publish an mqtt message
+//void sendSignal(String mySignal) {
+//  //Serial.println("sending signal");
+//  client.publish(garage_topic_out, mySignal);
+//  lastState = digitalRead(switchPin);
+//}
 
-//todo if efficiency is ever important, only send signal when necessary
+
 void checkSwitch() {
+  String myMessage = "";
   Serial.println("checking switch");
   switchState = digitalRead(switchPin);
   Serial.println(String(switchState).c_str());
+  
   if (switchState == 1) {
-    message = "OPEN";
+    myMessage = "OPEN";
   } else {
-    message = "CLOSED";
+    myMessage = "CLOSED";
   }
-  sendSignal();
 
-  //  if (switchState != lastState){
-  //    sendSignal();
-  //  }
+  //if state has changed, publish mqtt state change
+  if (switchState != lastState){
+    client.publish(garage_topic_out, (char*) myMessage.c_str());
+    lastState = switchState;    
+  }
 }
-
-void flipRelay() {
-  digitalWrite(relayPin, HIGH);
-  delay(500);
-  digitalWrite(relayPin, LOW);
-}
-
 
 void setup() {
   Serial.begin(115200);
-  setup_wifi();
-  //  setup_gmail()
-  client.setServer(mqtt_server, 1883);
-
+  
+  //start wifi
+  wifiSetup();
+  mdnsSetup();
+  
   // initialize the switch pin as an input:
   pinMode(switchPin, INPUT_PULLUP);
   // initialize the relay as an output:
   pinMode(relayPin, OUTPUT);
 
+  //hack for extra ground pin
+  pinMode(groundPin, OUTPUT);
+  digitalWrite(groundPin, LOW);
+  
+
   //set lastState on boot so when it checks the first time it won't change anything
   //lastState = digitalRead(switchPin);
+
+  
+  Serial.println(WiFi.localIP());
+  
+
+  //webota
+  // To use a specific port and path uncomment this line
+  // Defaults are 8080 and "/webota"
+  //webota.init(8888, "/update");
+
+  client.setServer(mqttServer, mqttPort);
+  client.setCallback(MQTTcallback);
+ 
+
+  Serial.println("Connecting to MQTT...");
+ 
+  if (client.connect("ESP8266")) {
+    Serial.println("connected");  
+  } 
+  else {
+    Serial.print("failed with state ");
+    Serial.println(client.state());  //If you get state 5: mismatch in configuration
+    delay(2000);
+  }
+  client.subscribe(garage_topic_in);
+  checkSwitch();
 }
 
 void loop() {
   if (!client.connected()) {
     reconnect();
   }
-  client.loop();
-
+  webota.handle();
   checkSwitch();
-  delay(5000);
+  client.loop();
+  delay(500);
 }
