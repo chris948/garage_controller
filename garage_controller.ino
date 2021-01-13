@@ -27,8 +27,8 @@ const char* mqttServer = "172.16.0.2";
 const int mqttPort = 1883;
 
 //todo - stop hard coding this
-#define garage_topic_out "sensor/garageDoorStatus2"
-#define garage_topic_in "sensor/garageDoorRelay2"
+#define garage_topic_out "sensor/garageDoorStatus"
+#define garage_topic_in "sensor/garageDoorRelay"
 
 //todo - stop hard coding this
 //constants for GPIO pins
@@ -59,7 +59,7 @@ void MQTTcallback(char* topic, byte* payload, unsigned int length) {
   }
   Serial.println("-----------------------"); 
   Serial.println(message);
-  if(message == "testFLIP") {
+  if(message == "FLIP") {
     flipRelay();
     }
   Serial.println("-----------------------");  
